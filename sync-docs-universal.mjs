@@ -50,13 +50,13 @@ or from /scripts/sync-docs:
 import fs from "fs";
 import path from "path";
 import zlib from "zlib";
+import readline from "readline";
 import { JSDOM } from "jsdom";
 import yaml from "js-yaml";
 import archiver from "archiver";
 
-// move up two levels to reach repo root
 const __dirname = path.dirname(new URL(import.meta.url).pathname);
-const repoRoot = path.resolve(__dirname, "../..");
+const defaultSourceDir = path.resolve(__dirname, "../..");
 
 // outputs live beside the script
 const outputDir = __dirname;
@@ -83,7 +83,43 @@ const skipExts = [
 
 let processed = 0;
 let skipped = 0;
+let targetUrl = "";
 const logEntries = [];
+
+function promptUserForURL() {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout
+  });
+
+  return new Promise(resolve => {
+    rl.question(
+      "Enter the URL to scrape (e.g., https://developers.openai.com or GitHub repo URL): ",
+      answer => {
+        rl.close();
+        resolve(answer.trim());
+      }
+    );
+  });
+}
+
+function resolveSourceDirectory(userInput) {
+  if (userInput) {
+    try {
+      const candidate = path.resolve(userInput);
+      if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) {
+        return candidate;
+      }
+    } catch {
+      // swallow and fall through to default
+    }
+    console.warn(
+      "⚠️  Provided input does not map to a local directory yet; defaulting to the script repo root."
+    );
+  }
+
+  return defaultSourceDir;
+}
 
 function safeRead(filePath) {
   try {
@@ -128,16 +164,16 @@ function extractReadableContent(filePath, content) {
   return content;
 }
 
-function crawlDir(dir, output) {
+function crawlDir(dir, output, rootDir) {
   const entries = fs.readdirSync(dir, { withFileTypes: true });
 
   for (const entry of entries) {
     const fullPath = path.join(dir, entry.name);
-    const relPath = path.relative(repoRoot, fullPath);
+    const relPath = path.relative(rootDir, fullPath);
 
     if (entry.isDirectory()) {
       if (excludeDirs.includes(entry.name)) continue;
-      crawlDir(fullPath, output);
+      crawlDir(fullPath, output, rootDir);
     } else {
       const ext = path.extname(entry.name).toLowerCase();
 
@@ -170,12 +206,20 @@ function crawlDir(dir, output) {
   }
 }
 
-function main() {
+async function main() {
   console.log("🧭 Starting universal docs compile...");
+  targetUrl = await promptUserForURL();
+  if (!targetUrl) {
+    console.log("ℹ️  No URL entered; continuing with local default path.");
+  } else {
+    console.log(`🌐 Target captured: ${targetUrl}`);
+  }
+
+  const repoRoot = resolveSourceDirectory(targetUrl);
   const output = [];
   const start = Date.now();
 
-  crawlDir(repoRoot, output);
+  crawlDir(repoRoot, output, repoRoot);
 
   fs.writeFileSync(outputFile, output.join("\n"));
   const archive = archiver("zip", { zlib: { level: 9 } }); // Changed to use archiver for ZIP
@@ -195,7 +239,13 @@ function main() {
 `;
 
   console.log(summary);
-  fs.writeFileSync(logFile, [summary, ...logEntries].join("\n"));
+  const targetDetails = targetUrl
+    ? `🌐 Requested URL: ${targetUrl}`
+    : "🌐 Requested URL: (not provided)";
+  fs.writeFileSync(logFile, [summary, targetDetails, ...logEntries].join("\n"));
 }
 
-main();
+main().catch(err => {
+  console.error("❌ Compilation failed.", err);
+  process.exit(1);
+});
