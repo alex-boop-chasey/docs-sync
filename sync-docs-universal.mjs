@@ -51,6 +51,7 @@ import fs from "fs";
 import path from "path";
 import zlib from "zlib";
 import readline from "readline";
+import { spawn, spawnSync } from "child_process";
 import { JSDOM } from "jsdom";
 import yaml from "js-yaml";
 import archiver from "archiver";
@@ -63,6 +64,7 @@ const outputDir = __dirname;
 const outputFile = path.join(outputDir, "compiled-docs.txt");
 const logFile = path.join(outputDir, "compile-log.txt");
 const zipFile = `${outputFile}.zip`; // Changed from gzipFile to zipFile
+const mirrorBaseDir = path.join(outputDir, "mirrors");
 
 const includeExts = [
   ".md", ".mdx", ".html", ".htm", ".txt",
@@ -85,6 +87,106 @@ let processed = 0;
 let skipped = 0;
 let targetUrl = "";
 const logEntries = [];
+
+function isValidUrl(value) {
+  if (!value) return false;
+  try {
+    const parsed = new URL(value);
+    return Boolean(parsed.protocol && parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function ensureDir(dir) {
+  fs.mkdirSync(dir, { recursive: true });
+}
+
+function sanitizeForFolderName(value) {
+  return value.replace(/[^a-z0-9]+/gi, "-").replace(/^-+|-+$/g, "") || "mirror";
+}
+
+function timestampLabel() {
+  return new Date().toISOString().replace(/[:.]/g, "-");
+}
+
+function deriveLabelFromUrl(url) {
+  try {
+    return new URL(url).hostname || url;
+  } catch {
+    return url;
+  }
+}
+
+function prepareMirrorDirectory(url) {
+  ensureDir(mirrorBaseDir);
+  const label = sanitizeForFolderName(deriveLabelFromUrl(url));
+  const dirName = `${label}-${timestampLabel()}`;
+  const sessionDir = path.join(mirrorBaseDir, dirName);
+  ensureDir(sessionDir);
+  return sessionDir;
+}
+
+function ensureWgetAvailable() {
+  const result = spawnSync("wget", ["--version"], { stdio: "ignore" });
+  if (result.error || result.status !== 0) {
+    throw new Error(
+      "wget is required for mirroring but was not found in PATH. Install it via Homebrew (brew install wget) or your package manager."
+    );
+  }
+}
+
+function determineMirrorRoot(url, prefixPath) {
+  try {
+    const { hostname } = new URL(url);
+    const hostPath = path.join(prefixPath, hostname);
+    if (fs.existsSync(hostPath)) {
+      return hostPath;
+    }
+  } catch {
+    // fall through
+  }
+  return prefixPath;
+}
+
+function runWget(url, savePath) {
+  return new Promise((resolve, reject) => {
+    const startMessage = `⬇️  Starting wget mirror for ${url}`;
+    console.log(startMessage);
+    logEntries.push(startMessage);
+
+    const args = [
+      "--mirror",
+      "--convert-links",
+      "--adjust-extension",
+      "--page-requisites",
+      "--no-parent",
+      url,
+      "-P",
+      savePath
+    ];
+
+    const wget = spawn("wget", args, { stdio: "inherit" });
+
+    wget.on("error", err => {
+      logEntries.push(`❌ wget error: ${err.message}`);
+      reject(err);
+    });
+
+    wget.on("close", code => {
+      if (code === 0) {
+        const successMessage = `✅ wget mirror saved under ${savePath}`;
+        console.log(successMessage);
+        logEntries.push(successMessage);
+        resolve(savePath);
+      } else {
+        const failureMessage = `❌ wget exited with code ${code}`;
+        logEntries.push(failureMessage);
+        reject(new Error(failureMessage));
+      }
+    });
+  });
+}
 
 function promptUserForURL() {
   const rl = readline.createInterface({
@@ -215,7 +317,33 @@ async function main() {
     console.log(`🌐 Target captured: ${targetUrl}`);
   }
 
-  const repoRoot = resolveSourceDirectory(targetUrl);
+  let repoRoot = defaultSourceDir;
+  const urlProvided = isValidUrl(targetUrl);
+
+  if (urlProvided) {
+    try {
+      ensureWgetAvailable();
+      const sessionDir = prepareMirrorDirectory(targetUrl);
+      await runWget(targetUrl, sessionDir);
+      repoRoot = determineMirrorRoot(targetUrl, sessionDir);
+      console.log(`📁 Using mirrored files from ${repoRoot}`);
+      logEntries.push(`📁 Using mirrored files from ${repoRoot}`);
+    } catch (err) {
+      console.error("❌ Failed to mirror site with wget.", err.message || err);
+      console.warn("⚠️  Falling back to local default directory.");
+      logEntries.push(`⚠️  wget fallback: ${err.message || err}`);
+      repoRoot = defaultSourceDir;
+    }
+  } else {
+    repoRoot = resolveSourceDirectory(targetUrl);
+  }
+
+  if (!fs.existsSync(repoRoot)) {
+    console.warn(`⚠️  Source directory "${repoRoot}" was not found. Falling back to ${defaultSourceDir}.`);
+    logEntries.push(`⚠️  Missing source directory: ${repoRoot}`);
+    repoRoot = defaultSourceDir;
+  }
+
   const output = [];
   const start = Date.now();
 
