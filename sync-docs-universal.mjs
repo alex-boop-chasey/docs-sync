@@ -425,6 +425,54 @@ function crawlDir(dir, output, rootDir) {
   }
 }
 
+function compileDocs(sourceDir) {
+  console.log(`🧮 Compiling documents from ${sourceDir}`);
+  logEntries.push(`🧮 Compiling documents from ${sourceDir}`);
+
+  processed = 0;
+  skipped = 0;
+  const collected = [];
+  const start = Date.now();
+
+  crawlDir(sourceDir, collected, sourceDir);
+
+  const compiledContent = collected.join("\n");
+  fs.writeFileSync(outputFile, compiledContent);
+
+  const duration = ((Date.now() - start) / 1000).toFixed(2);
+  const message = `✅ Compilation written to ${outputFile} in ${duration}s`;
+  console.log(message);
+  logEntries.push(message);
+
+  return { content: compiledContent, duration };
+}
+
+function zipOutput(content) {
+  return new Promise((resolve, reject) => {
+    console.log(`🗜  Creating archive ${zipFile}`);
+    logEntries.push(`🗜  Creating archive ${zipFile}`);
+
+    const archive = archiver("zip", { zlib: { level: 9 } });
+    const outputStream = fs.createWriteStream(zipFile);
+
+    outputStream.on("close", () => {
+      const message = `✅ Archive ready: ${zipFile}`;
+      console.log(message);
+      logEntries.push(message);
+      resolve(zipFile);
+    });
+
+    archive.on("error", err => {
+      logEntries.push(`❌ Archive error: ${err.message}`);
+      reject(err);
+    });
+
+    archive.pipe(outputStream);
+    archive.append(content, { name: "compiled-docs.txt" });
+    archive.finalize();
+  });
+}
+
 async function main() {
   console.log("🧭 Starting universal docs compile...");
   targetUrl = await promptUserForURL();
@@ -476,24 +524,15 @@ async function main() {
 
   updateOutputTargets(repoRoot);
 
-  const output = [];
-  const start = Date.now();
-
-  crawlDir(repoRoot, output, repoRoot);
-
-  fs.writeFileSync(outputFile, output.join("\n"));
-  const archive = archiver("zip", { zlib: { level: 9 } }); // Changed to use archiver for ZIP
-  const outputStream = fs.createWriteStream(zipFile);
-  archive.pipe(outputStream);
-  archive.append(output.join("\n"), { name: "compiled-docs.txt" }); // Add content to ZIP
-  archive.finalize();
-
-  const duration = ((Date.now() - start) / 1000).toFixed(2);
+  const runStart = Date.now();
+  const { content, duration: compileDuration } = compileDocs(repoRoot);
+  await zipOutput(content);
+  const totalDuration = ((Date.now() - runStart) / 1000).toFixed(2);
   const summary = `
 🎉 Compilation complete!
 ✅ Files processed: ${processed}
 ⏭ Files skipped: ${skipped}
-🕒 Duration: ${duration}s
+🕒 Duration: ${totalDuration}s (crawl ${compileDuration}s)
 📝 Output: ${outputFile}
 🗜  Zipped: ${zipFile}
 `;
