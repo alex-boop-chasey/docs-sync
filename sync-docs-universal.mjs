@@ -86,6 +86,7 @@ const skipExts = [
 let processed = 0;
 let skipped = 0;
 let targetUrl = "";
+let targetDir = defaultSourceDir;
 const logEntries = [];
 
 function isValidUrl(value) {
@@ -118,13 +119,119 @@ function deriveLabelFromUrl(url) {
   }
 }
 
-function prepareMirrorDirectory(url) {
+function prepareMirrorDirectory(url, baseDir) {
+  if (baseDir) {
+    const resolved = path.resolve(baseDir);
+    ensureDir(resolved);
+    return resolved;
+  }
+
   ensureDir(mirrorBaseDir);
   const label = sanitizeForFolderName(deriveLabelFromUrl(url));
   const dirName = `${label}-${timestampLabel()}`;
   const sessionDir = path.join(mirrorBaseDir, dirName);
   ensureDir(sessionDir);
   return sessionDir;
+}
+
+function escapeForAppleScriptString(value) {
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+function runAppleScript(script) {
+  return new Promise((resolve, reject) => {
+    const osa = spawn("osascript", ["-e", script]);
+    let output = "";
+    let errorOutput = "";
+
+    osa.stdout.on("data", chunk => {
+      output += chunk.toString();
+    });
+
+    osa.stderr.on("data", chunk => {
+      errorOutput += chunk.toString();
+    });
+
+    osa.on("error", reject);
+
+    osa.on("close", code => {
+      if (code === 0) {
+        resolve(output.trim());
+      } else {
+        const message = errorOutput.trim() || `osascript exited with code ${code}`;
+        reject(new Error(message));
+      }
+    });
+  });
+}
+
+function promptUserForDirectoryInput(question, defaultDir) {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout
+  });
+
+  return new Promise(resolve => {
+    const prompt = defaultDir ? `${question} (${defaultDir}): ` : `${question}: `;
+    rl.question(prompt, answer => {
+      rl.close();
+      const response = answer.trim();
+      if (!response && defaultDir) {
+        resolve(path.resolve(defaultDir));
+        return;
+      }
+      if (!response) {
+        resolve("");
+        return;
+      }
+      resolve(path.resolve(response));
+    });
+  });
+}
+
+async function promptUserForSavePath(defaultDir = mirrorBaseDir) {
+  ensureDir(defaultDir);
+
+  if (process.platform === "darwin") {
+    const script = `
+      set defaultLocation to POSIX file "${escapeForAppleScriptString(defaultDir)}"
+      try
+        set selectedFolder to choose folder with prompt "Select a folder to store the mirrored site" default location defaultLocation
+        return POSIX path of selectedFolder
+      on error errMsg number errNum
+        if errNum is -128 then
+          return ""
+        else
+          error errMsg number errNum
+        end if
+      end try
+    `;
+
+    try {
+      const result = await runAppleScript(script);
+      if (result) {
+        const resolved = path.resolve(result);
+        ensureDir(resolved);
+        return resolved;
+      }
+      console.log("ℹ️  Folder selection canceled.");
+      return "";
+    } catch (err) {
+      console.warn("⚠️  Finder dialog failed, falling back to CLI prompt.", err.message || err);
+      logEntries.push(`⚠️  Finder dialog failed: ${err.message || err}`);
+    }
+  }
+
+  const fallback = await promptUserForDirectoryInput(
+    "Enter folder path to store the mirrored site",
+    defaultDir
+  );
+
+  if (fallback) {
+    ensureDir(fallback);
+  }
+
+  return fallback;
 }
 
 function ensureWgetAvailable() {
@@ -323,25 +430,38 @@ async function main() {
   if (urlProvided) {
     try {
       ensureWgetAvailable();
-      const sessionDir = prepareMirrorDirectory(targetUrl);
-      await runWget(targetUrl, sessionDir);
-      repoRoot = determineMirrorRoot(targetUrl, sessionDir);
+      const selectedPath = await promptUserForSavePath(mirrorBaseDir);
+      if (selectedPath) {
+        console.log(`📂 Finder selection: ${selectedPath}`);
+        logEntries.push(`📂 Finder selection: ${selectedPath}`);
+      } else {
+        console.log(`ℹ️  Using default mirror workspace: ${mirrorBaseDir}`);
+        logEntries.push(`ℹ️  Using default mirror workspace: ${mirrorBaseDir}`);
+      }
+      const mirrorLocation = prepareMirrorDirectory(targetUrl, selectedPath || undefined);
+      targetDir = mirrorLocation;
+      await runWget(targetUrl, mirrorLocation);
+      repoRoot = determineMirrorRoot(targetUrl, mirrorLocation);
+      targetDir = repoRoot;
       console.log(`📁 Using mirrored files from ${repoRoot}`);
       logEntries.push(`📁 Using mirrored files from ${repoRoot}`);
     } catch (err) {
       console.error("❌ Failed to mirror site with wget.", err.message || err);
       console.warn("⚠️  Falling back to local default directory.");
       logEntries.push(`⚠️  wget fallback: ${err.message || err}`);
+      targetDir = defaultSourceDir;
       repoRoot = defaultSourceDir;
     }
   } else {
     repoRoot = resolveSourceDirectory(targetUrl);
+    targetDir = repoRoot;
   }
 
   if (!fs.existsSync(repoRoot)) {
     console.warn(`⚠️  Source directory "${repoRoot}" was not found. Falling back to ${defaultSourceDir}.`);
     logEntries.push(`⚠️  Missing source directory: ${repoRoot}`);
     repoRoot = defaultSourceDir;
+    targetDir = repoRoot;
   }
 
   const output = [];
