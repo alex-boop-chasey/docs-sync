@@ -1,0 +1,123 @@
+🧩 Patch Series: “Universal URL + Local Compiler Integration”
+
+Patch 1 — Input Prompt and URL Handling
+Goal:
+Enable the script to ask for a target URL instead of assuming a local repo path.
+
+Changes:
+- Replace the fixed repoRoot logic with user input.
+- Use Node’s readline or prompts to ask:
+  “Enter the URL to scrape (e.g., https://developers.openai.com or GitHub repo URL):”
+- Store the URL for later use by the wget function.
+
+
+Patch 2 — Wget Site Scraper Integration
+Goal:
+Automatically clone or mirror the target site into a chosen folder.
+
+Changes:
+- Add dependency check for wget (ensure it’s installed).
+- Build a function, e.g. runWget(url, savePath), which executes:
+  wget --mirror --convert-links --adjust-extension --page-requisites --no-parent <URL> -P <SAVE_PATH>
+- Show console feedback (progress or success message).
+
+
+Patch 3 — Finder “Save As” Dialog Integration
+Goal:
+Let the user choose where to save the mirrored site.
+
+Changes:
+- Use osascript (macOS AppleScript) to open a “Save As” Finder dialog and capture the path.
+- Alternatively, use electron or dialog from node:child_process if GUI available.
+- Store the returned folder path as the targetDir for processing.
+
+
+Patch 4 — Decouple Compiler from Script Directory
+Goal:
+Make sync-docs-universal process any directory, not just the local scripts/sync-docs folder.
+
+Changes:
+- Replace all instances of:
+  const repoRoot = path.resolve(__dirname, "../..");
+  with:
+  const repoRoot = targetDir;
+- Ensure outputs (compiled-docs.txt, compile-log.txt, and ZIP) are saved inside the same target folder rather than beside the script.
+
+
+Patch 5 — Modular Function Split
+Goal:
+Make each stage reusable and testable (wget stage, compile stage, zip stage).
+
+Changes:
+- Refactor main() into sub-functions:
+  promptUserForURL()
+  promptUserForSavePath()
+  runWget(url, path)
+  compileDocs(targetDir)
+  zipOutput(targetDir)
+- main() simply orchestrates the flow.
+
+
+Patch 6 — Logging and Summary Enhancements
+Goal:
+Provide clearer feedback across both wget and compilation.
+
+Changes:
+- Add logs for:
+  - Start/end of wget operation.
+  - Total files downloaded.
+  - Location of downloaded mirror.
+  - Duration of each phase.
+- Write all of this into a single combined compile-log.txt.
+
+
+Patch 7 — Optional “Skip Wget” Mode
+Goal:
+Allow reusing already-downloaded folders (no need to redownload).
+
+Changes:
+- Before running wget, ask:
+  “Do you already have a local copy of the site? (y/n)”
+- If “y”, skip to compileDocs() and just prompt for local path.
+
+
+Patch 8 — File Permissions and Cleanup
+Goal:
+Ensure smooth re-runs and avoid clutter.
+
+Changes:
+- If output files already exist in targetDir, auto-overwrite or archive previous ones.
+- Optionally offer cleanup flag to remove non-text assets after compile.
+
+
+Patch 9 — Metadata + Header Injection
+Goal:
+Add useful metadata to the top of compiled-docs.txt.
+
+Changes:
+- Include:
+  - Source URL
+  - Date/time
+  - Total files processed
+  - Destination folder path
+
+
+Patch 10 — Config and Extensibility
+Goal:
+Prepare for future automation and non-interactive runs.
+
+Changes:
+- Add optional support for .yaml config file (e.g. config.yaml) with keys like:
+  url: "https://astro.build"
+  savePath: "/Users/alex/Desktop/astro-docs"
+  skipWget: false
+- If config exists, skip prompts.
+
+
+✅ Summary of Upgrade Outcome
+After these 10 patches:
+- The script can accept any website URL.
+- It uses wget to scrape and Finder to choose the save folder.
+- Then it runs the universal doc compiler over the downloaded files.
+- Everything logs and zips neatly in the chosen folder.
+- You can rerun without redownloading or even feed a YAML config for automation.
