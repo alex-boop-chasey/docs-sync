@@ -59,12 +59,12 @@ import archiver from "archiver";
 const __dirname = path.dirname(new URL(import.meta.url).pathname);
 const defaultSourceDir = path.resolve(__dirname, "../..");
 
-// outputs live beside the script
-const outputDir = __dirname;
-const outputFile = path.join(outputDir, "compiled-docs.txt");
-const logFile = path.join(outputDir, "compile-log.txt");
-const zipFile = `${outputFile}.zip`; // Changed from gzipFile to zipFile
-const mirrorBaseDir = path.join(outputDir, "mirrors");
+// outputs are configured dynamically per target directory
+let outputDir = defaultSourceDir;
+let outputFile = path.join(outputDir, "compiled-docs.txt");
+let logFile = path.join(outputDir, "compile-log.txt");
+let zipFile = `${outputFile}.zip`;
+const mirrorBaseDir = path.join(__dirname, "mirrors");
 
 const includeExts = [
   ".md", ".mdx", ".html", ".htm", ".txt",
@@ -101,6 +101,16 @@ function isValidUrl(value) {
 
 function ensureDir(dir) {
   fs.mkdirSync(dir, { recursive: true });
+}
+
+function updateOutputTargets(dir) {
+  const resolved = path.resolve(dir);
+  ensureDir(resolved);
+  targetDir = resolved;
+  outputDir = resolved;
+  outputFile = path.join(resolved, "compiled-docs.txt");
+  logFile = path.join(resolved, "compile-log.txt");
+  zipFile = `${outputFile}.zip`;
 }
 
 function sanitizeForFolderName(value) {
@@ -463,6 +473,8 @@ async function main() {
     repoRoot = defaultSourceDir;
     targetDir = repoRoot;
   }
+
+  updateOutputTargets(repoRoot);
 
   const output = [];
   const start = Date.now();
