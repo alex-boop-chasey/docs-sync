@@ -25,6 +25,13 @@
 - Added timing, reset counters per run, and richer log messages per stage for easier testing and reuse.
 - Simplified `main()` to orchestrate prompts → wget download → compilation → zipping, making future patches (skip wget, metadata, config) easier to slot in.
 
+## 2025-11-15 — Debug Session (Node ERR_MODULE_NOT_FOUND)
+
+- Encountered `ERR_MODULE_NOT_FOUND` for `jsdom` when running `sync-docs-universal.mjs` under Node v24.4.1 despite the package being installed; subsequent runs surfaced missing `js-yaml` and `archiver`, which were installed via `npm install jsdom js-yaml archiver`.
+- Verified the dependencies by running `npm list` and a direct dynamic import (`node --input-type=module -e "import('jsdom').then(...)"`), confirming the modules work outside the script.
+- Identified the likely root cause as an execution-context mismatch: when the script runs, its base directory/module resolution path appears to shift away from `/Users/home/Development/Scripts/docs-sync`, so Node fails to locate `node_modules`.
+- Planned next diagnostic action: log `process.cwd()` and `import.meta.url` at runtime to confirm whether the script is being launched from an unexpected directory or via a wrapper that alters module resolution.
+
 Here’s a concise **Codex-ready changelog summary** of this debugging session so far:
 
 ---
