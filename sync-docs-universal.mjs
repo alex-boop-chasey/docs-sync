@@ -66,10 +66,13 @@ let logFile = path.join(outputDir, "compile-log.txt");
 let zipFile = `${outputFile}.zip`;
 const mirrorBaseDir = path.join(__dirname, "mirrors");
 
-const includeExts = [
-  ".md", ".mdx", ".html", ".htm", ".txt",
-  ".js", ".jsx", ".ts", ".tsx", ".json",
-  ".yaml", ".yml"
+const includeExtsLocal = [
+  ".md", ".mdx", ".markdown", ".html", ".htm", ".txt",
+  ".json", ".yaml", ".yml"
+];
+
+const includeExtsScraped = [
+  ".html", ".htm", ".txt"
 ];
 
 const excludeDirs = [
@@ -87,6 +90,7 @@ let processed = 0;
 let skipped = 0;
 let targetUrl = "";
 let targetDir = defaultSourceDir;
+let activeIncludeExts = includeExtsLocal;
 const logEntries = [];
 
 function isValidUrl(value) {
@@ -111,6 +115,12 @@ function updateOutputTargets(dir) {
   outputFile = path.join(resolved, "compiled-docs.txt");
   logFile = path.join(resolved, "compile-log.txt");
   zipFile = `${outputFile}.zip`;
+}
+
+function setActiveIncludeList(useScrapedList) {
+  activeIncludeExts = useScrapedList ? includeExtsScraped : includeExtsLocal;
+  const mode = useScrapedList ? "scraped HTML-only" : "full local doc set";
+  logEntries.push(`📚 Using include list mode: ${mode}`);
 }
 
 function sanitizeForFolderName(value) {
@@ -383,7 +393,11 @@ function extractReadableContent(filePath, content) {
   return content;
 }
 
-function crawlDir(dir, output, rootDir) {
+function appendToCompiled(chunk) {
+  fs.appendFileSync(outputFile, chunk, "utf8");
+}
+
+function crawlDir(dir, rootDir) {
   const entries = fs.readdirSync(dir, { withFileTypes: true });
 
   for (const entry of entries) {
@@ -392,7 +406,7 @@ function crawlDir(dir, output, rootDir) {
 
     if (entry.isDirectory()) {
       if (excludeDirs.includes(entry.name)) continue;
-      crawlDir(fullPath, output, rootDir);
+      crawlDir(fullPath, rootDir);
     } else {
       const ext = path.extname(entry.name).toLowerCase();
 
@@ -402,12 +416,12 @@ function crawlDir(dir, output, rootDir) {
         continue;
       }
 
-      if (includeExts.includes(ext)) {
+      if (activeIncludeExts.includes(ext)) {
         const content = safeRead(fullPath);
         const cleaned = extractReadableContent(fullPath, content);
 
         if (typeof cleaned === "string" && cleaned.trim().length > 0) {
-          output.push(
+          appendToCompiled(
             `\n============================================\nFILE: ${relPath}\n============================================\n${cleaned}\n`
           );
           processed++;
@@ -431,23 +445,20 @@ function compileDocs(sourceDir) {
 
   processed = 0;
   skipped = 0;
-  const collected = [];
+  fs.writeFileSync(outputFile, "", "utf8");
   const start = Date.now();
 
-  crawlDir(sourceDir, collected, sourceDir);
-
-  const compiledContent = collected.join("\n");
-  fs.writeFileSync(outputFile, compiledContent);
+  crawlDir(sourceDir, sourceDir);
 
   const duration = ((Date.now() - start) / 1000).toFixed(2);
   const message = `✅ Compilation written to ${outputFile} in ${duration}s`;
   console.log(message);
   logEntries.push(message);
 
-  return { content: compiledContent, duration };
+  return { duration };
 }
 
-function zipOutput(content) {
+function zipOutput() {
   return new Promise((resolve, reject) => {
     console.log(`🗜  Creating archive ${zipFile}`);
     logEntries.push(`🗜  Creating archive ${zipFile}`);
@@ -468,7 +479,7 @@ function zipOutput(content) {
     });
 
     archive.pipe(outputStream);
-    archive.append(content, { name: "compiled-docs.txt" });
+    archive.append(fs.createReadStream(outputFile), { name: "compiled-docs.txt" });
     archive.finalize();
   });
 }
@@ -522,11 +533,13 @@ async function main() {
     targetDir = repoRoot;
   }
 
+  const isScrapedSource = urlProvided && repoRoot !== defaultSourceDir;
+  setActiveIncludeList(isScrapedSource);
   updateOutputTargets(repoRoot);
 
   const runStart = Date.now();
-  const { content, duration: compileDuration } = compileDocs(repoRoot);
-  await zipOutput(content);
+  const { duration: compileDuration } = compileDocs(repoRoot);
+  await zipOutput();
   const totalDuration = ((Date.now() - runStart) / 1000).toFixed(2);
   const summary = `
 🎉 Compilation complete!

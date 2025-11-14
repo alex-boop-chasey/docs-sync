@@ -32,6 +32,12 @@
 - Identified the likely root cause as an execution-context mismatch: when the script runs, its base directory/module resolution path appears to shift away from `/Users/home/Development/Scripts/docs-sync`, so Node fails to locate `node_modules`.
 - Planned next diagnostic action: log `process.cwd()` and `import.meta.url` at runtime to confirm whether the script is being launched from an unexpected directory or via a wrapper that alters module resolution.
 
+## 2025-11-15 — init.js Launcher + Streaming Compile Fixes
+
+- Added a CommonJS `init.js` shim that uses dynamic `import()` to run `sync-docs-universal.mjs`, resolving the `node init.js` entry point failure.
+- Restricted scraped runs to a HTML/text include list so mirrored sites compile only the human-readable docs instead of bundler JS/CSS payloads.
+- Switched compilation to a streaming writer: files are appended directly to `compiled-docs.txt`, and the ZIP builder now streams that file, eliminating the multi-GB in-memory buffer that caused the heap OOM in `run1.txt`.
+
 Here’s a concise **Codex-ready changelog summary** of this debugging session so far:
 
 ---
