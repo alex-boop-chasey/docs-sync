@@ -393,13 +393,17 @@ function extractReadableContent(filePath, content) {
 
   if (ext === ".html" || ext === ".htm") {
     const dom = new JSDOM(content);
-    const document = dom.window.document;
-    document.querySelectorAll("nav, footer, header, menu, aside").forEach(el => el.remove());
-    document.querySelectorAll("iframe[src*='youtube']").forEach(el => {
-      const src = el.getAttribute("src");
-      el.replaceWith(`[YouTube video link]: ${src}`);
-    });
-    return document.body?.textContent?.trim() ?? "";
+    try {
+      const document = dom.window.document;
+      document.querySelectorAll("nav, footer, header, menu, aside").forEach(el => el.remove());
+      document.querySelectorAll("iframe[src*='youtube']").forEach(el => {
+        const src = el.getAttribute("src");
+        el.replaceWith(`[YouTube video link]: ${src}`);
+      });
+      return document.body?.textContent?.trim() ?? "";
+    } finally {
+      dom.window.close();
+    }
   }
 
   if (ext === ".yaml" || ext === ".yml") {
