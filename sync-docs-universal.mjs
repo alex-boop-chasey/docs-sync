@@ -91,7 +91,8 @@ let skipped = 0;
 let targetUrl = "";
 let targetDir = defaultSourceDir;
 let activeIncludeExts = includeExtsLocal;
-const logEntries = [];
+let logReady = false;
+let pendingLogChunks = [];
 
 function isValidUrl(value) {
   if (!value) return false;
@@ -115,12 +116,41 @@ function updateOutputTargets(dir) {
   outputFile = path.join(resolved, "compiled-docs.txt");
   logFile = path.join(resolved, "compile-log.txt");
   zipFile = `${outputFile}.zip`;
+  initializeLogFile();
+}
+
+function initializeLogFile() {
+  const initialContent = pendingLogChunks.join("");
+  fs.writeFileSync(logFile, initialContent);
+  pendingLogChunks = [];
+  logReady = true;
+}
+
+function enqueueLogChunk(chunk) {
+  pendingLogChunks.push(chunk);
+}
+
+function appendToLog(chunk) {
+  if (logReady) {
+    fs.appendFileSync(logFile, chunk);
+  } else {
+    enqueueLogChunk(chunk);
+  }
+}
+
+function logEvent(message = "") {
+  appendToLog(`${message}\n`);
+}
+
+function logBlock(block = "") {
+  const text = block.endsWith("\n") ? block : `${block}\n`;
+  appendToLog(text);
 }
 
 function setActiveIncludeList(useScrapedList) {
   activeIncludeExts = useScrapedList ? includeExtsScraped : includeExtsLocal;
   const mode = useScrapedList ? "scraped HTML-only" : "full local doc set";
-  logEntries.push(`📚 Using include list mode: ${mode}`);
+  logEvent(`📚 Using include list mode: ${mode}`);
 }
 
 function sanitizeForFolderName(value) {
@@ -238,7 +268,7 @@ async function promptUserForSavePath(defaultDir = mirrorBaseDir) {
       return "";
     } catch (err) {
       console.warn("⚠️  Finder dialog failed, falling back to CLI prompt.", err.message || err);
-      logEntries.push(`⚠️  Finder dialog failed: ${err.message || err}`);
+      logEvent(`⚠️  Finder dialog failed: ${err.message || err}`);
     }
   }
 
@@ -280,7 +310,7 @@ function runWget(url, savePath) {
   return new Promise((resolve, reject) => {
     const startMessage = `⬇️  Starting wget mirror for ${url}`;
     console.log(startMessage);
-    logEntries.push(startMessage);
+    logEvent(startMessage);
 
     const args = [
       "--mirror",
@@ -296,7 +326,7 @@ function runWget(url, savePath) {
     const wget = spawn("wget", args, { stdio: "inherit" });
 
     wget.on("error", err => {
-      logEntries.push(`❌ wget error: ${err.message}`);
+      logEvent(`❌ wget error: ${err.message}`);
       reject(err);
     });
 
@@ -304,11 +334,11 @@ function runWget(url, savePath) {
       if (code === 0) {
         const successMessage = `✅ wget mirror saved under ${savePath}`;
         console.log(successMessage);
-        logEntries.push(successMessage);
+        logEvent(successMessage);
         resolve(savePath);
       } else {
         const failureMessage = `❌ wget exited with code ${code}`;
-        logEntries.push(failureMessage);
+        logEvent(failureMessage);
         reject(new Error(failureMessage));
       }
     });
@@ -412,7 +442,7 @@ function crawlDir(dir, rootDir) {
 
       if (skipExts.includes(ext)) {
         skipped++;
-        logEntries.push(`⏭ Skipped: ${relPath}`);
+        logEvent(`⏭ Skipped: ${relPath}`);
         continue;
       }
 
@@ -426,14 +456,14 @@ function crawlDir(dir, rootDir) {
           );
           processed++;
           console.log(`✅ Processed: ${relPath}`);
-          logEntries.push(`✅ Processed: ${relPath}`);
+          logEvent(`✅ Processed: ${relPath}`);
         } else {
           skipped++;
-          logEntries.push(`⏭ Skipped (empty or invalid): ${relPath}`);
+          logEvent(`⏭ Skipped (empty or invalid): ${relPath}`);
         }
       } else {
         skipped++;
-        logEntries.push(`⏭ Skipped (ext): ${relPath}`);
+        logEvent(`⏭ Skipped (ext): ${relPath}`);
       }
     }
   }
@@ -441,7 +471,7 @@ function crawlDir(dir, rootDir) {
 
 function compileDocs(sourceDir) {
   console.log(`🧮 Compiling documents from ${sourceDir}`);
-  logEntries.push(`🧮 Compiling documents from ${sourceDir}`);
+  logEvent(`🧮 Compiling documents from ${sourceDir}`);
 
   processed = 0;
   skipped = 0;
@@ -453,7 +483,7 @@ function compileDocs(sourceDir) {
   const duration = ((Date.now() - start) / 1000).toFixed(2);
   const message = `✅ Compilation written to ${outputFile} in ${duration}s`;
   console.log(message);
-  logEntries.push(message);
+  logEvent(message);
 
   return { duration };
 }
@@ -461,7 +491,7 @@ function compileDocs(sourceDir) {
 function zipOutput() {
   return new Promise((resolve, reject) => {
     console.log(`🗜  Creating archive ${zipFile}`);
-    logEntries.push(`🗜  Creating archive ${zipFile}`);
+    logEvent(`🗜  Creating archive ${zipFile}`);
 
     const archive = archiver("zip", { zlib: { level: 9 } });
     const outputStream = fs.createWriteStream(zipFile);
@@ -469,12 +499,12 @@ function zipOutput() {
     outputStream.on("close", () => {
       const message = `✅ Archive ready: ${zipFile}`;
       console.log(message);
-      logEntries.push(message);
+      logEvent(message);
       resolve(zipFile);
     });
 
     archive.on("error", err => {
-      logEntries.push(`❌ Archive error: ${err.message}`);
+      logEvent(`❌ Archive error: ${err.message}`);
       reject(err);
     });
 
@@ -502,10 +532,10 @@ async function main() {
       const selectedPath = await promptUserForSavePath(mirrorBaseDir);
       if (selectedPath) {
         console.log(`📂 Finder selection: ${selectedPath}`);
-        logEntries.push(`📂 Finder selection: ${selectedPath}`);
+        logEvent(`📂 Finder selection: ${selectedPath}`);
       } else {
         console.log(`ℹ️  Using default mirror workspace: ${mirrorBaseDir}`);
-        logEntries.push(`ℹ️  Using default mirror workspace: ${mirrorBaseDir}`);
+        logEvent(`ℹ️  Using default mirror workspace: ${mirrorBaseDir}`);
       }
       const mirrorLocation = prepareMirrorDirectory(targetUrl, selectedPath || undefined);
       targetDir = mirrorLocation;
@@ -513,11 +543,11 @@ async function main() {
       repoRoot = determineMirrorRoot(targetUrl, mirrorLocation);
       targetDir = repoRoot;
       console.log(`📁 Using mirrored files from ${repoRoot}`);
-      logEntries.push(`📁 Using mirrored files from ${repoRoot}`);
+      logEvent(`📁 Using mirrored files from ${repoRoot}`);
     } catch (err) {
       console.error("❌ Failed to mirror site with wget.", err.message || err);
       console.warn("⚠️  Falling back to local default directory.");
-      logEntries.push(`⚠️  wget fallback: ${err.message || err}`);
+      logEvent(`⚠️  wget fallback: ${err.message || err}`);
       targetDir = defaultSourceDir;
       repoRoot = defaultSourceDir;
     }
@@ -528,7 +558,7 @@ async function main() {
 
   if (!fs.existsSync(repoRoot)) {
     console.warn(`⚠️  Source directory "${repoRoot}" was not found. Falling back to ${defaultSourceDir}.`);
-    logEntries.push(`⚠️  Missing source directory: ${repoRoot}`);
+    logEvent(`⚠️  Missing source directory: ${repoRoot}`);
     repoRoot = defaultSourceDir;
     targetDir = repoRoot;
   }
@@ -551,10 +581,11 @@ async function main() {
 `;
 
   console.log(summary);
+  logBlock(summary);
   const targetDetails = targetUrl
     ? `🌐 Requested URL: ${targetUrl}`
     : "🌐 Requested URL: (not provided)";
-  fs.writeFileSync(logFile, [summary, targetDetails, ...logEntries].join("\n"));
+  logEvent(targetDetails);
 }
 
 main().catch(err => {
