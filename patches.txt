@@ -1,123 +1,105 @@
-🧩 Patch Series: “Universal URL + Local Compiler Integration”
+```
+# PATCH SERIES — DOCS MIRROR INTEGRATION
+# Rebirth-CLI / patches.txt
 
-Patch 1 — Input Prompt and URL Handling
+────────────────────────────────────────────
+PATCH 3.1 — Add docs-sources.json
+────────────────────────────────────────────
 Goal:
-Enable the script to ask for a target URL instead of assuming a local repo path.
+Introduce a configuration file listing all framework documentation URLs to be mirrored locally.
 
-Changes:
-- Replace the fixed repoRoot logic with user input.
-- Use Node’s readline or prompts to ask:
-  “Enter the URL to scrape (e.g., https://developers.openai.com or GitHub repo URL):”
-- Store the URL for later use by the wget function.
+Details:
+- Create /core/config/docs-sources.json.
+- Define key-value pairs for each documentation source:
+  {
+    "astro": "https://docs.astro.build/",
+    "tailwind": "https://tailwindcss.com/docs/",
+    "vite": "https://vitejs.dev/guide/",
+    "react": "https://react.dev/",
+    "strapi": "https://docs.strapi.io/",
+    "snipcart": "https://docs.snipcart.com/"
+  }
+- Ensure CLI can load and parse this file.
+- Prepare structure for easy expansion or version pinning later.
 
-
-Patch 2 — Wget Site Scraper Integration
+────────────────────────────────────────────
+PATCH 3.2 — Integrate wget availability check
+────────────────────────────────────────────
 Goal:
-Automatically clone or mirror the target site into a chosen folder.
+Ensure wget exists before attempting mirroring.
 
-Changes:
-- Add dependency check for wget (ensure it’s installed).
-- Build a function, e.g. runWget(url, savePath), which executes:
-  wget --mirror --convert-links --adjust-extension --page-requisites --no-parent <URL> -P <SAVE_PATH>
-- Show console feedback (progress or success message).
+Details:
+- Add a CLI preflight check for wget.
+- If wget not found, output a clear message: “wget required — install via brew install wget.”
+- Stop setup gracefully if missing.
 
-
-Patch 3 — Finder “Save As” Dialog Integration
+────────────────────────────────────────────
+PATCH 3.3 — Mirror documentation during setup
+────────────────────────────────────────────
 Goal:
-Let the user choose where to save the mirrored site.
+Automatically mirror each documentation source into a project’s /docs directory.
 
-Changes:
-- Use osascript (macOS AppleScript) to open a “Save As” Finder dialog and capture the path.
-- Alternatively, use electron or dialog from node:child_process if GUI available.
-- Store the returned folder path as the targetDir for processing.
+Details:
+- During setup (after boilerplate creation), iterate through docs-sources.json.
+- For each source:
+  - Run wget with flags:
+    --mirror --convert-links --adjust-extension --no-parent
+  - Save output to /docs/<toolname> inside project root.
+- Create /logs/docs-mirror.log for status output.
+- Skip any docs already mirrored unless --force flag used.
 
-
-Patch 4 — Decouple Compiler from Script Directory
+────────────────────────────────────────────
+PATCH 3.4 — Directory and logging structure
+────────────────────────────────────────────
 Goal:
-Make sync-docs-universal process any directory, not just the local scripts/sync-docs folder.
+Standardize output locations and log flow.
 
-Changes:
-- Replace all instances of:
-  const repoRoot = path.resolve(__dirname, "../..");
-  with:
-  const repoRoot = targetDir;
-- Ensure outputs (compiled-docs.txt, compile-log.txt, and ZIP) are saved inside the same target folder rather than beside the script.
+Details:
+- Project root gains a /docs directory containing subfolders:
+    /docs/astro/
+    /docs/tailwind/
+    /docs/vite/
+    /docs/react/
+    /docs/strapi/
+    /docs/snipcart/
+- Add /logs/docs-mirror.log capturing wget output, start/end times, and success/fail messages.
+- Integrate into existing Rebirth-CLI logger if available.
 
-
-Patch 5 — Modular Function Split
+────────────────────────────────────────────
+PATCH 3.5 — CLI flags and re-run safety
+────────────────────────────────────────────
 Goal:
-Make each stage reusable and testable (wget stage, compile stage, zip stage).
+Allow flexible re-runs and selective updates.
 
-Changes:
-- Refactor main() into sub-functions:
-  promptUserForURL()
-  promptUserForSavePath()
-  runWget(url, path)
-  compileDocs(targetDir)
-  zipOutput(targetDir)
-- main() simply orchestrates the flow.
+Details:
+- Support optional flags:
+  --skip-docs : bypass mirroring step entirely.
+  --force-docs : re-download even if docs already exist.
+- Ensure no overwrite unless explicitly requested.
 
-
-Patch 6 — Logging and Summary Enhancements
+────────────────────────────────────────────
+PATCH 3.6 — Cleanup and archival
+────────────────────────────────────────────
 Goal:
-Provide clearer feedback across both wget and compilation.
+Retire the old sync-docs-universal.mjs compiler.
 
-Changes:
-- Add logs for:
-  - Start/end of wget operation.
-  - Total files downloaded.
-  - Location of downloaded mirror.
-  - Duration of each phase.
-- Write all of this into a single combined compile-log.txt.
+Details:
+- Move sync-docs-universal.mjs and related files to /archive/scripts/.
+- Add reference in documentation noting it remains available for large offline compiles if ever needed.
+- Update CHANGELOG.md to mark transition from compiled text model to per-project docs mirroring.
 
+────────────────────────────────────────────
+EXPECTED RESULT
+────────────────────────────────────────────
+After Patch 3.6:
+- Every new project initialized by Rebirth-CLI includes a fully mirrored /docs folder containing all current framework documentation.
+- Codex in VS Code automatically gains access to these resources for context-aware autocompletion, debugging, and code generation.
+- No parsing or text compilation required.
+- System stable, reproducible, and version-controlled per project.
 
-Patch 7 — Optional “Skip Wget” Mode
-Goal:
-Allow reusing already-downloaded folders (no need to redownload).
-
-Changes:
-- Before running wget, ask:
-  “Do you already have a local copy of the site? (y/n)”
-- If “y”, skip to compileDocs() and just prompt for local path.
-
-
-Patch 8 — File Permissions and Cleanup
-Goal:
-Ensure smooth re-runs and avoid clutter.
-
-Changes:
-- If output files already exist in targetDir, auto-overwrite or archive previous ones.
-- Optionally offer cleanup flag to remove non-text assets after compile.
-
-
-Patch 9 — Metadata + Header Injection
-Goal:
-Add useful metadata to the top of compiled-docs.txt.
-
-Changes:
-- Include:
-  - Source URL
-  - Date/time
-  - Total files processed
-  - Destination folder path
-
-
-Patch 10 — Config and Extensibility
-Goal:
-Prepare for future automation and non-interactive runs.
-
-Changes:
-- Add optional support for .yaml config file (e.g. config.yaml) with keys like:
-  url: "https://astro.build"
-  savePath: "/Users/alex/Desktop/astro-docs"
-  skipWget: false
-- If config exists, skip prompts.
-
-
-✅ Summary of Upgrade Outcome
-After these 10 patches:
-- The script can accept any website URL.
-- It uses wget to scrape and Finder to choose the save folder.
-- Then it runs the universal doc compiler over the downloaded files.
-- Everything logs and zips neatly in the chosen folder.
-- You can rerun without redownloading or even feed a YAML config for automation.
+────────────────────────────────────────────
+NEXT SERIES PREVIEW
+────────────────────────────────────────────
+PATCH 4 — Metadata & Version Pinning
+PATCH 5 — Monthly Docs Refresh Command
+```
