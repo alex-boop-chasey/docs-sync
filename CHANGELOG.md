@@ -1,97 +1,50 @@
-## 2025-11-13 — Universal URL + Local Compiler Integration (Patches 1‑5)
+## 2025-11-13 — Patch Series 1‑5: Mirror-Aware Compiler Foundation
 
-### Patch 1 — Input Prompt and URL Handling
-- Replaced the hard-coded repo root with an interactive URL prompt, capturing `targetUrl` for later steps.
-- Added validation/fallback logic so blank or invalid input defaults to the local repo while still logging the user’s request.
-- Ensured downstream logging records when a URL was provided, even if the workflow later falls back to local files.
+### Patch 1 — Input Prompt & URL Handling
+- Added an interactive prompt that captures a requested docs URL while logging whether the run stayed local or mirrored remotely.
+- Hardened validation so blank, malformed, or unresolved inputs gracefully fall back to the bundled repo while still documenting the user intent.
 
-### Patch 2 — Wget Site Scraper Integration
-- Added `child_process` spawning plus mirror workspace setup under `scripts/sync-docs/mirrors`.
-- Implemented `ensureWgetAvailable`, wget argument construction, and `runWget` with live console output and structured log entries.
-- Added helpers to normalize mirror folder names, detect the appropriate host subdirectory, and gracefully fall back when wget fails.
+### Patch 2 — wget Site Scraper Integration
+- Introduced the `mirrors/` workspace plus helper utilities to normalize hostnames and choose the correct mirrored root.
+- Wrapped wget execution with `runWget`, live console streaming, and structured log output so failures fall back to local files without crashing the run.
 
 ### Patch 3 — Finder “Save As” Dialog Integration
-- Introduced AppleScript + CLI fallback prompts that let users pick where mirrored files should live.
-- Added sanitization helpers (`escapeForAppleScriptString`, `runAppleScript`, `promptUserForDirectoryInput`, `promptUserForSavePath`) and persisted the chosen directory for the wget run.
-- Logged picker results (Finder selection, default fallback, or failures) so the compile log tells the full story of where assets were stored.
+- Added an AppleScript-powered directory picker (with CLI fallback) so users can decide where mirrored assets are stored.
+- Sanitized user input, persisted Finder selections, and logged the decision path (Finder success, cancel, or CLI fallback) for replayability.
 
-### Patch 4 — Decouple Compiler from Script Directory
-- Replaced static output paths with `updateOutputTargets()`, which redirects compiled artifacts, logs, and archives into the active `targetDir`.
-- Ensured every workflow (URL mirror or local path) updates the output destinations before crawling so results land alongside the selected source tree.
-- Kept the legacy `scripts/sync-docs` layout as a fallback by resolving to `defaultSourceDir` only when necessary.
+### Patch 4 — Decoupled Output Targets
+- Replaced hard-coded output paths with `updateOutputTargets()`, ensuring `compiled-docs.txt`, `compile-log.txt`, and the ZIP land inside the active target directory (either the repo or a mirrored site).
+- Maintained a safe fallback to the script root when no override is supplied.
 
-### Patch 5 — Modular Function Split
-- Refactored the monolithic `main()` into reusable stages: `compileDocs(sourceDir)` and `zipOutput(content)` now own traversal/write and archiving respectively.
-- Added timing, reset counters per run, and richer log messages per stage for easier testing and reuse.
-- Simplified `main()` to orchestrate prompts → wget download → compilation → zipping, making future patches (skip wget, metadata, config) easier to slot in.
+### Patch 5 — Modular Compiler & Archiver Stages
+- Split the monolithic workflow into `compileDocs()` and `zipOutput()` so crawling, writing, and archiving can be re-run independently.
+- Added per-run timing, reset counters, and richer summary logging to prepare for advanced flags (skip docs/force docs) planned in later patch sets.
 
-## 2025-11-15 — Debug Session (Node ERR_MODULE_NOT_FOUND)
+## 2025-11-15 — Dependency & Runtime Stabilization
 
-- Encountered `ERR_MODULE_NOT_FOUND` for `jsdom` when running `sync-docs-universal.mjs` under Node v24.4.1 despite the package being installed; subsequent runs surfaced missing `js-yaml` and `archiver`, which were installed via `npm install jsdom js-yaml archiver`.
-- Verified the dependencies by running `npm list` and a direct dynamic import (`node --input-type=module -e "import('jsdom').then(...)"`), confirming the modules work outside the script.
-- Identified the likely root cause as an execution-context mismatch: when the script runs, its base directory/module resolution path appears to shift away from `/Users/home/Development/Scripts/docs-sync`, so Node fails to locate `node_modules`.
-- Planned next diagnostic action: log `process.cwd()` and `import.meta.url` at runtime to confirm whether the script is being launched from an unexpected directory or via a wrapper that alters module resolution.
+- Investigated repeated `ERR_MODULE_NOT_FOUND` failures for `jsdom`, `js-yaml`, and `archiver` even after local installs.
+- Verified packages via `npm list` and direct `node --input-type=module` imports, leading to the discovery that launch context, not missing deps, blocked resolution.
+- Planned instrumentation (`process.cwd()` / `import.meta.url` logging) to confirm when the runtime shifts away from `/Users/home/Development/Scripts/docs-sync`.
 
-## 2025-11-15 — init.js Launcher + Streaming Compile Fixes
+## 2025-11-15 — Launcher & Streaming Compiler Upgrades
 
-- Added a CommonJS `init.js` shim that uses dynamic `import()` to run `sync-docs-universal.mjs`, resolving the `node init.js` entry point failure.
-- Restricted scraped runs to a HTML/text include list so mirrored sites compile only the human-readable docs instead of bundler JS/CSS payloads.
-- Switched compilation to a streaming writer: files are appended directly to `compiled-docs.txt`, and the ZIP builder now streams that file, eliminating the multi-GB in-memory buffer that caused the heap OOM in `run1.txt`.
+- Added a CommonJS `init.js` shim so `node init.js` reliably dynamic-imports the ESM compiler and surfaces downstream failures with correct exit codes.
+- Limited scraped runs to HTML/text payloads, preventing mirrored bundles and assets from flooding `compiled-docs.txt`.
+- Converted compilation and zipping to streaming writers: files append directly to disk and the ZIP process streams the text file, eliminating the multi-GB in-memory buffers that previously caused heap OOMs.
 
-Here’s a concise **Codex-ready changelog summary** of this debugging session so far:
+## 2025-11-16 — Logging & Memory Guardrails
 
----
+- Replaced the in-memory log accumulator with a buffered, file-backed logger so long runs no longer retain every message in RAM.
+- Ensured every JSDOM instance calls `window.close()` after parsing to avoid detached DOM leaks.
+- Captured run telemetry (`run1.txt`, `run2.txt`, `run5.txt`) to document successful multi-stage crawls after the streaming rewrite.
 
-### 🧩 **Debug Session — sync-docs-universal.mjs (Node ERR_MODULE_NOT_FOUND chain)**
+## 2025-11-17 — Patch 3.1 / 3.2 Rollback
 
-**Date:** 2025-11-15
-**Context:** Running universal documentation sync script under Node v24.4.1
+- Removed `core/config/docs-sources.json` and the bootstrapping logic that attempted to preload it via environment variables.
+- Dropped the `init.js` wget preflight guard; `ensureWgetAvailable()` now runs only inside the ESM workflow where error handling already exists.
+- Restored the slimmer launcher so future patch-series work (3.3‑3.6) can rebuild the docs-source registry with a cleaner integration path.
 
-#### **Sequence of Events**
+## Next Steps
 
-1. **Initial error:**
-
-   * `Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'jsdom' imported from sync-docs-universal.mjs`
-   * Resolved by installing `jsdom` locally.
-
-2. **Subsequent errors:**
-
-   * Missing modules surfaced in sequence: `js-yaml` → `archiver`.
-   * Installed all three via `npm install jsdom js-yaml archiver`.
-
-3. **Recurrent failure:**
-
-   * `ERR_MODULE_NOT_FOUND` for `jsdom` persisted **despite correct installation**.
-   * Verified local install (`npm list jsdom` ✅).
-   * Confirmed direct import works via:
-
-     ```bash
-     node --input-type=module -e "import('jsdom').then(m=>console.log('ok'))"
-     ```
-
-     → Output: `Loaded jsdom version: ok` ✅
-
-4. **Diagnosis:**
-
-   * Node’s module resolution paths are valid (`require.resolve.paths('jsdom')` lists the correct hierarchy).
-   * Therefore the fault isn’t missing deps but **execution context mismatch**:
-
-     * The script likely changes working directory or base URL before imports resolve.
-     * This causes `import 'jsdom'` to resolve relative to a higher-level path without a `node_modules` folder.
-
-5. **Next diagnostic step (planned):**
-   Add runtime introspection at the top of the script:
-
-   ```js
-   console.log('DEBUG cwd:', process.cwd());
-   console.log('DEBUG import.meta.url:', import.meta.url);
-   ```
-
-   This will confirm whether the script executes outside `/Users/home/Development/Scripts/docs-sync`.
-
-#### **Conclusion / Likely Root Cause**
-
-> The script executes under an altered **module resolution context** — possibly due to a launcher, re-import, or path rewrite (e.g., `import.meta.resolve` or `spawn` without `cwd`).
-> Node can import `jsdom` normally, but when launched as `sync-docs-universal.mjs`, its internal context no longer points to the correct `node_modules` tree.
-
----
+- Implement Patch 3.3 onward from `patches.txt` (automatic mirroring per project, logging structure, CLI flags) using the current stable base.
+- Re-introduce docs-source metadata once the runtime flow for per-framework mirroring is finalized.
